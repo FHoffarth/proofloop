@@ -1,12 +1,18 @@
 # ProofLoop
 
-**Evidence-aware multi-model engineering for software changes you can actually verify.**
+[![CI](https://github.com/FHoffarth/proofloop/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/FHoffarth/proofloop/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/downloads/)
+[![Status](https://img.shields.io/badge/status-experimental-orange)](#project-status)
+
+> Evidence-first verification for AI-assisted software engineering.
+
+**Agent reports are claims. Git, tests, files and artifacts are evidence.**
+
+`Planner → Critic → Evidence Verifier → Pre-Gate → Judge → Final Proof Gate`
+
+`The judge is advisory. The proof gate is authoritative.`
 
 ProofLoop is a small, deterministic orchestration layer for AI-assisted software engineering.
-
-It is built around one core rule:
-
-> **Agent reports are claims. Git, tests, files and artifacts are evidence.**
 
 Most multi-agent coding systems optimize for conversation, autonomy and task completion.
 ProofLoop optimizes for something else:
