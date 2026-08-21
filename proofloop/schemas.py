@@ -135,8 +135,12 @@ class VerifiedClaim(BaseModel):
 
     @property
     def open_evaluative(self) -> bool:
-        """True when this is a judgement call that evidence cannot close."""
-        return self.claim.evaluative and self.confidence is not ConfidenceLevel.PROVEN
+        """True when this is a judgement call that evidence cannot close.
+
+        Deliberately independent of ``confidence``: an evaluative claim that
+        arrives stamped ``PROVEN`` is forged, not closed, so it stays open.
+        """
+        return self.claim.evaluative
 
 
 class Plan(BaseModel):

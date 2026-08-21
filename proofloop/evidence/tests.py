@@ -6,34 +6,18 @@ The public checker is called ``verify_tests_passed`` rather than
 
 from __future__ import annotations
 
-import re
 import subprocess
 import sys
 from pathlib import Path
 
 from ..schemas import Evidence
-from . import UnsafeCommand, safe_run
+from . import NODE_ID_PATTERN, UnsafeCommand, safe_run, validate_node_id
 from .files import UnsafePath, resolve_in_repo
 
-#: A pytest node id: ``tests/test_x.py`` or ``tests/test_x.py::test_case``.
-NODE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_./:\[\]-]{1,300}$")
-
-
-def validate_node_id(node_id: str) -> str:
-    """Reject anything that is not a plain pytest node id.
-
-    In particular a leading ``-`` (pytest option injection, e.g.
-    ``-p no:cacheprovider``) and shell metacharacters are refused.
-    """
-    if not isinstance(node_id, str) or not node_id:
-        raise UnsafeCommand("empty pytest node id")
-    if node_id.startswith("-"):
-        raise UnsafeCommand(f"option-like pytest target rejected: {node_id!r}")
-    if not NODE_ID_PATTERN.match(node_id):
-        raise UnsafeCommand(f"unsafe pytest node id: {node_id!r}")
-    if ".." in node_id:
-        raise UnsafeCommand(f"traversal in pytest node id: {node_id!r}")
-    return node_id
+# The node-id validator lives beside the argv allow-list in
+# ``proofloop.evidence`` so that safe_run can enforce the same rule on the
+# argv it is handed, no matter who built it. Re-exported here for callers.
+__all__ = ["NODE_ID_PATTERN", "validate_node_id", "verify_tests_passed"]
 
 
 def verify_tests_passed(

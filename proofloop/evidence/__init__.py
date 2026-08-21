@@ -36,6 +36,12 @@ REF_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/@^~-]{0,255}$")
 #: A full or abbreviated hex sha.
 SHA_PATTERN = re.compile(r"^[0-9a-fA-F]{4,40}$")
 
+#: A pytest node id: ``tests/test_x.py`` or ``tests/test_x.py::test_case``.
+NODE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_./:\[\]-]{1,300}$")
+
+#: The only pytest marker expressions ProofLoop may pass: ``foo`` or ``not foo``.
+MARKER_PATTERN = re.compile(r"^(not )?[a-z][a-z0-9_]*$")
+
 
 class UnsafeCommand(ValueError):
     """Raised when a command or token fails the safety allow-list."""
@@ -66,6 +72,29 @@ def validate_sha(sha: str) -> str:
     return sha
 
 
+def validate_node_id(node_id: str) -> str:
+    """Return ``node_id`` unchanged, or raise :class:`UnsafeCommand`.
+
+    In particular a leading ``-`` (pytest option injection, e.g.
+    ``-p no:cacheprovider``) and shell metacharacters are refused.
+    """
+    if not isinstance(node_id, str) or not node_id:
+        raise UnsafeCommand("empty pytest node id")
+    if node_id.startswith("-"):
+        raise UnsafeCommand(f"option-like pytest target rejected: {node_id!r}")
+    if not NODE_ID_PATTERN.match(node_id):
+        raise UnsafeCommand(f"unsafe pytest node id: {node_id!r}")
+    if ".." in node_id:
+        raise UnsafeCommand(f"traversal in pytest node id: {node_id!r}")
+    return node_id
+
+
+def validate_marker(expression: str) -> str:
+    if not isinstance(expression, str) or not MARKER_PATTERN.match(expression or ""):
+        raise UnsafeCommand(f"unsafe pytest marker expression: {expression!r}")
+    return expression
+
+
 def _check_argv(argv: list[str]) -> None:
     if not argv:
         raise UnsafeCommand("empty command")
@@ -80,9 +109,42 @@ def _check_argv(argv: list[str]) -> None:
         if len(argv) < 2 or argv[1] not in ALLOWED_GIT_SUBCOMMANDS:
             raise UnsafeCommand(f"git subcommand not allow-listed: {argv[1:2]}")
         return
-    if head == sys.executable and argv[1:3] == ["-m", "pytest"]:
+    if head == sys.executable:
+        _check_pytest_argv(argv)
         return
     raise UnsafeCommand(f"executable not allow-listed: {head!r}")
+
+
+def _check_pytest_argv(argv: list[str]) -> None:
+    """Allow exactly one pytest argv shape, not "anything starting with pytest".
+
+    Permitted grammar::
+
+        <python> -m pytest -q [-m <marker expr>] [-- <node id>]
+
+    Anything else -- ``-p``, ``--basetemp=``, ``--rootdir=``, ``-c``, bare
+    paths, repeated options, trailing junk -- is refused. This is what makes
+    the allow-list an allow-list rather than a prefix match.
+    """
+    if argv[1:4] != ["-m", "pytest", "-q"]:
+        raise UnsafeCommand(f"pytest argv not allow-listed: {argv[1:4]}")
+
+    rest = argv[4:]
+
+    if rest[:1] == ["-m"]:
+        if len(rest) < 2:
+            raise UnsafeCommand("pytest -m given without a marker expression")
+        validate_marker(rest[1])
+        rest = rest[2:]
+
+    if rest[:1] == ["--"]:
+        if len(rest) != 2:
+            raise UnsafeCommand(f"pytest target list not allow-listed: {rest[1:]}")
+        validate_node_id(rest[1])
+        rest = rest[2:]
+
+    if rest:
+        raise UnsafeCommand(f"unrecognised pytest arguments: {rest}")
 
 
 def safe_run(
@@ -109,9 +171,13 @@ def safe_run(
 __all__ = [
     "ALLOWED_GIT_SUBCOMMANDS",
     "DEFAULT_TIMEOUT",
+    "MARKER_PATTERN",
+    "NODE_ID_PATTERN",
     "UnsafeCommand",
     "UnsafePath",
     "safe_run",
+    "validate_marker",
+    "validate_node_id",
     "validate_ref",
     "validate_sha",
 ]

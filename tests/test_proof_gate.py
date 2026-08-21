@@ -37,12 +37,12 @@ def _det(result: VerificationResult, required: bool = True) -> VerifiedClaim:
     )
 
 
-def _eval_claim() -> VerifiedClaim:
+def _eval_claim(claim_type: ClaimType = ClaimType.BUG_FIXED) -> VerifiedClaim:
     return VerifiedClaim(
         claim=Claim(
-            id="bug-fixed",
-            type=ClaimType.BUG_FIXED,
-            statement="the bug is fixed",
+            id=claim_type.value.lower().replace("_", "-"),
+            type=claim_type,
+            statement="a judgement call",
             required=False,
         ),
         result=VerificationResult.INSUFFICIENT,
@@ -106,18 +106,79 @@ def test_pipeline_errors_are_blockers() -> None:
     assert "provider exploded" in decision.blockers
 
 
-def test_gate_ignores_a_forged_proven_confidence_on_an_evaluative_claim() -> None:
-    """Even if something upstream stamps PROVEN on a judgement call.
+EVALUATIVE_TYPES = [
+    ClaimType.BUG_FIXED,
+    ClaimType.SAFE_TO_MERGE,
+    ClaimType.NO_REGRESSION,
+    ClaimType.ARCHITECTURE_CORRECT,
+    ClaimType.GENERAL_INFERENCE,
+]
 
-    The gate's own accounting must not turn that into a PASS silently; a
-    deterministic fact is still required for anything to be proven.
+
+@pytest.mark.parametrize("claim_type", EVALUATIVE_TYPES)
+def test_gate_rejects_a_forged_proven_evaluative_claim(claim_type: ClaimType) -> None:
+    """An evaluative claim stamped PROVEN upstream must still go to review.
+
+    The gate decides this from the claim type alone. It must not trust the
+    confidence it is handed, and it must not rely on the verifier having
+    capped it: forged state cannot override deterministic gate policy.
     """
-    forged = _eval_claim()
+    forged = _eval_claim(claim_type)
+    forged.confidence = ConfidenceLevel.PROVEN
+    forged.result = VerificationResult.VERIFIED
+
+    decision = ProofGate().evaluate([forged])
+
+    assert decision.result is GateResult.REVIEW_REQUIRED
+    # It appears explicitly, and it is named as a rejected forgery.
+    assert len(decision.review_items) == 1
+    assert forged.claim.id in decision.review_items[0]
+    assert "stamped PROVEN" in decision.review_items[0]
+    # It never contributes a PROVEN reason.
+    assert decision.reasons == []
+    assert not any("PROVEN" in reason for reason in decision.reasons)
+
+
+@pytest.mark.parametrize("claim_type", EVALUATIVE_TYPES)
+def test_forged_proven_evaluative_claim_cannot_produce_pass(
+    claim_type: ClaimType,
+) -> None:
+    """Even alongside a genuinely proven deterministic fact."""
+    forged = _eval_claim(claim_type)
+    forged.confidence = ConfidenceLevel.PROVEN
+    decision = ProofGate().evaluate([_det(VerificationResult.VERIFIED), forged])
+    assert decision.result is GateResult.REVIEW_REQUIRED
+
+
+@pytest.mark.parametrize("claim_type", EVALUATIVE_TYPES)
+def test_deterministic_blockers_still_outrank_a_forged_proven_claim(
+    claim_type: ClaimType,
+) -> None:
+    forged = _eval_claim(claim_type)
+    forged.confidence = ConfidenceLevel.PROVEN
+    decision = ProofGate().evaluate([_det(VerificationResult.FAILED), forged])
+    assert decision.result is GateResult.BLOCKED
+    assert decision.blockers
+
+
+@pytest.mark.parametrize("claim_type", EVALUATIVE_TYPES)
+def test_forged_proven_claim_is_still_open(claim_type: ClaimType) -> None:
+    """The schema-level view agrees with the gate: it is not closed."""
+    forged = _eval_claim(claim_type)
+    forged.confidence = ConfidenceLevel.PROVEN
+    assert forged.open_evaluative is True
+
+
+@pytest.mark.parametrize("claim_type", EVALUATIVE_TYPES)
+def test_required_forged_proven_claim_does_not_block_or_pass(
+    claim_type: ClaimType,
+) -> None:
+    """``required`` on an evaluative claim does not turn it into a blocker."""
+    forged = _eval_claim(claim_type)
+    forged.claim.required = True
     forged.confidence = ConfidenceLevel.PROVEN
     decision = ProofGate().evaluate([forged])
-    # The gate does not treat evaluative claims as facts, so nothing is proven.
-    assert decision.result is not GateResult.BLOCKED
-    assert not any("PROVEN" in reason for reason in decision.reasons)
+    assert decision.result is GateResult.REVIEW_REQUIRED
 
 
 def test_has_deterministic_blockers() -> None:

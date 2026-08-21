@@ -8,7 +8,14 @@ from pathlib import Path
 
 import pytest
 
-from proofloop.evidence import UnsafeCommand, UnsafePath, safe_run, validate_ref, validate_sha
+from proofloop.evidence import (
+    UnsafeCommand,
+    UnsafePath,
+    safe_run,
+    validate_marker,
+    validate_ref,
+    validate_sha,
+)
 from proofloop.evidence.files import file_contains, resolve_in_repo
 from proofloop.evidence.git import (
     branch_at_sha,
@@ -119,6 +126,89 @@ def test_safe_run_rejects_non_allowlisted_git_subcommand(repo: Path) -> None:
 def test_safe_run_allows_allowlisted_git_subcommand(repo: Path) -> None:
     proc = safe_run(["git", "rev-parse", "HEAD"], cwd=repo)
     assert proc.returncode == 0
+
+
+PYTEST_HEAD = [sys.executable, "-m", "pytest", "-q"]
+TRIVIAL_TEST = "def test_ok():\n    assert True\n"
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        [],
+        ["-m", "not integration"],
+        ["-m", "integration"],
+        ["--", "tests/test_x.py"],
+        ["-m", "not integration", "--", "tests/test_x.py::test_case"],
+        ["-m", "not integration", "--", "tests/test_x.py::test_case[param-1]"],
+    ],
+)
+def test_pytest_argv_grammar_allows_only_the_shapes_proofloop_builds(
+    repo: Path, extra: list[str]
+) -> None:
+    from proofloop.evidence import _check_pytest_argv
+
+    _check_pytest_argv(PYTEST_HEAD + extra)  # must not raise
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["-p", "no:cacheprovider"],
+        ["-p", "evil_plugin"],
+        ["--basetemp=/tmp/pwned"],
+        ["--rootdir=/"],
+        ["-c", "evil.ini"],
+        ["--pdb"],
+        ["--co"],
+        ["tests/"],                      # bare path without the -- separator
+        ["--", "tests/a.py", "tests/b.py"],  # more than one target
+        ["--"],                          # separator with no target
+        ["-m"],                          # marker flag with no expression
+        ["-m", "not integration or evil"],
+        ["-m", "--basetemp=/tmp"],
+        ["--", "-p"],
+        ["--", "../../outside.py"],
+        ["-q"],                          # trailing junk
+        ["-m", "not integration", "-p", "x"],
+    ],
+)
+def test_pytest_argv_grammar_rejects_everything_else(extra: list[str]) -> None:
+    with pytest.raises(UnsafeCommand):
+        safe_run(PYTEST_HEAD + extra, cwd=Path.cwd())
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        [sys.executable, "-m", "pytest"],          # missing -q
+        [sys.executable, "-m", "pytest", "-v"],    # wrong verbosity flag
+        [sys.executable, "-c", "import os"],       # not pytest at all
+        [sys.executable, "-m", "pip", "install", "openai"],
+        [sys.executable],
+    ],
+)
+def test_pytest_argv_head_must_match_exactly(argv: list[str]) -> None:
+    with pytest.raises(UnsafeCommand):
+        safe_run(argv, cwd=Path.cwd())
+
+
+def test_validate_marker_rejects_expressions() -> None:
+    assert validate_marker("not integration") == "not integration"
+    for bad in ["not integration or slow", "-m", "", "not (integration)", "a;b"]:
+        with pytest.raises(UnsafeCommand):
+            validate_marker(bad)
+
+
+def test_verify_tests_passed_builds_an_allow_listed_argv(tmp_path: Path) -> None:
+    """The argv the real checker builds must satisfy the grammar."""
+    from proofloop.evidence import _check_pytest_argv
+
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "test_ok.py").write_text(TRIVIAL_TEST, encoding="utf-8")
+    ev = verify_tests_passed(root, node_id="test_ok.py", timeout=120)
+    _check_pytest_argv(ev.command)
 
 
 def test_validate_sha_rejects_garbage() -> None:
