@@ -182,9 +182,94 @@ def test_safe_run_rejects_non_allowlisted_git_subcommand(repo: Path) -> None:
         safe_run(["git", "push", "origin", "main"], cwd=repo)
 
 
-def test_safe_run_allows_allowlisted_git_subcommand(repo: Path) -> None:
-    proc = safe_run(["git", "rev-parse", "HEAD"], cwd=repo)
+GIT_PRODUCTION_ARGV = [
+    ["git", "rev-parse", "--is-inside-work-tree"],
+    ["git", "rev-parse", "--verify", "HEAD^{commit}"],
+    ["git", "cat-file", "-e", "HEAD^{commit}"],
+    ["git", "status", "--porcelain"],
+    ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "HEAD"],
+]
+
+
+@pytest.mark.parametrize("argv", GIT_PRODUCTION_ARGV)
+def test_safe_run_allows_exactly_the_git_shapes_proofloop_emits(
+    repo: Path, argv: list[str]
+) -> None:
+    proc = safe_run(argv, cwd=repo)
     assert proc.returncode == 0
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        # Write-capable / output-redirecting options on read-only subcommands.
+        ["git", "show", "--output=/tmp/proofloop-out", "HEAD"],
+        ["git", "diff-tree", "--output=/tmp/x", "HEAD"],
+        [
+            "git",
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "--root",
+            "--output=/tmp/x",
+        ],
+        ["git", "cat-file", "--filters", "HEAD:a.txt"],
+        # Extra options on an otherwise allowed shape.
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        ["git", "rev-parse", "--exec-path=/tmp"],
+        ["git", "rev-parse", "--git-path", "hooks"],
+        ["git", "rev-parse", "--verify", "HEAD^{commit}", "--verify"],
+        # Config injection before the subcommand.
+        ["git", "-c", "core.pager=touch /tmp/pwned", "show", "HEAD"],
+        ["git", "-c", "alias.x=!sh", "status", "--porcelain"],
+        ["git", "-c", "core.hooksPath=/tmp", "rev-parse", "--is-inside-work-tree"],
+        ["git", "--exec-path=/tmp", "status", "--porcelain"],
+        # Subcommands ProofLoop does not use at all.
+        ["git", "show", "HEAD"],
+        ["git", "rev-list", "--all"],
+        ["git", "log", "-1"],
+        ["git", "push", "origin", "main"],
+        ["git", "commit", "-m", "x"],
+        # Shapes that are close but not exact.
+        ["git", "rev-parse", "HEAD"],
+        ["git", "status"],
+        ["git", "cat-file", "-p", "HEAD^{commit}"],
+        ["git", "diff-tree", "--name-only", "-r", "HEAD"],
+        ["git"],
+    ],
+)
+def test_safe_run_rejects_every_other_git_argv(argv: list[str]) -> None:
+    with pytest.raises(UnsafeCommand):
+        safe_run(argv, cwd=Path.cwd())
+
+
+def test_git_output_option_never_writes_a_file(tmp_path: Path, repo: Path) -> None:
+    """The concrete escape from the review: it must not reach git."""
+    target = tmp_path / "proofloop-out"
+    with pytest.raises(UnsafeCommand):
+        safe_run(["git", "show", f"--output={target}", "HEAD"], cwd=repo)
+    assert not target.exists()
+
+
+def test_ref_slot_cannot_carry_an_option(repo: Path) -> None:
+    for argv in (
+        ["git", "rev-parse", "--verify", "--output=/tmp/x"],
+        ["git", "cat-file", "-e", "--filters"],
+        ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "-p"],
+    ):
+        with pytest.raises(UnsafeCommand):
+            safe_run(argv, cwd=repo)
+
+
+def test_unused_git_subcommands_are_gone() -> None:
+    from proofloop.evidence import ALLOWED_GIT_SUBCOMMANDS
+
+    assert "show" not in ALLOWED_GIT_SUBCOMMANDS
+    assert "rev-list" not in ALLOWED_GIT_SUBCOMMANDS
+    assert ALLOWED_GIT_SUBCOMMANDS == frozenset(
+        {"rev-parse", "cat-file", "status", "diff-tree"}
+    )
 
 
 PYTEST_HEAD = [sys.executable, "-m", "pytest", "-q"]

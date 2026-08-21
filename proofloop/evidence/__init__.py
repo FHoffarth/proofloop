@@ -18,17 +18,24 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 
 DEFAULT_TIMEOUT = 60
 
-#: git subcommands ProofLoop is ever allowed to invoke. Read-only by design.
-ALLOWED_GIT_SUBCOMMANDS = frozenset(
-    {
-        "rev-parse",
-        "cat-file",
-        "status",
-        "show",
-        "diff-tree",
-        "rev-list",
-    }
+#: The exact git argv shapes ProofLoop emits, minus the caller-supplied ref.
+#: A subcommand allow-list is not enough: git accepts write-capable options on
+#: read-only subcommands (``git show --output=/tmp/x HEAD`` writes outside the
+#: repository), so the whole argv is matched, option by option.
+#:
+#: ``REF`` marks the one position a validated commit-ish may occupy.
+GIT_ARGV_GRAMMARS: tuple[tuple[str, ...], ...] = (
+    ("rev-parse", "--is-inside-work-tree"),
+    ("rev-parse", "--verify", "REF"),
+    ("cat-file", "-e", "REF"),
+    ("status", "--porcelain"),
+    ("diff-tree", "--no-commit-id", "--name-only", "-r", "--root", "REF"),
 )
+
+#: Derived from the grammars above, kept for callers that only want the names.
+#: ``show`` and ``rev-list`` were listed here once but are not called by any
+#: production path, so they are gone.
+ALLOWED_GIT_SUBCOMMANDS = frozenset(grammar[0] for grammar in GIT_ARGV_GRAMMARS)
 
 #: A git object-ish token: sha, branch, tag, ``HEAD~2``. Deliberately narrow.
 REF_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/@^~-]{0,255}$")
@@ -134,13 +141,55 @@ def _check_argv(argv: list[str]) -> None:
 
     head = argv[0]
     if head == "git":
-        if len(argv) < 2 or argv[1] not in ALLOWED_GIT_SUBCOMMANDS:
-            raise UnsafeCommand(f"git subcommand not allow-listed: {argv[1:2]}")
+        _check_git_argv(argv)
         return
     if head == sys.executable:
         _check_pytest_argv(argv)
         return
     raise UnsafeCommand(f"executable not allow-listed: {head!r}")
+
+
+def _check_commit_ish(token: str) -> str:
+    """Validate the one caller-supplied token a git grammar may contain.
+
+    ProofLoop only ever passes a commit-ish in the peeled ``<ref>^{commit}``
+    form, or a bare ref to ``diff-tree``. Both go through
+    :func:`validate_ref`, so options can never appear in a ref slot.
+    """
+    if token.endswith("^{commit}"):
+        validate_ref(token[: -len("^{commit}")])
+        return token
+    validate_ref(token)
+    return token
+
+
+def _check_git_argv(argv: list[str]) -> None:
+    """Match the argv against :data:`GIT_ARGV_GRAMMARS`, exactly.
+
+    Every option must be one this grammar names, in this position. That is
+    what makes the allow-list read-only in practice: ``--output=``,
+    ``--exec-path=``, ``--git-path``, ``--filters``, ``--untracked-files=``
+    and a pre-subcommand ``-c core.pager=...`` all fail here, before anything
+    is spawned.
+    """
+    rest = argv[1:]
+    if not rest:
+        raise UnsafeCommand("git invoked without a subcommand")
+
+    for grammar in GIT_ARGV_GRAMMARS:
+        if len(rest) != len(grammar):
+            continue
+        if any(
+            expected != "REF" and expected != actual
+            for expected, actual in zip(grammar, rest)
+        ):
+            continue
+        for expected, actual in zip(grammar, rest):
+            if expected == "REF":
+                _check_commit_ish(actual)
+        return
+
+    raise UnsafeCommand(f"git argv not allow-listed: {rest}")
 
 
 def _check_pytest_argv(argv: list[str]) -> None:
@@ -200,6 +249,7 @@ __all__ = [
     "ALLOWED_GIT_SUBCOMMANDS",
     "DEFAULT_TIMEOUT",
     "DRIVE_PATTERN",
+    "GIT_ARGV_GRAMMARS",
     "MARKER_PATTERN",
     "NODE_ID_PATTERN",
     "UnsafeCommand",
