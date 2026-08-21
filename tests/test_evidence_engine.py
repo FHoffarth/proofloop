@@ -108,6 +108,65 @@ def test_injection_in_commit_claim_is_blocked_evidence(repo: Path) -> None:
     assert ev.command == []  # nothing was ever spawned
 
 
+ABSOLUTE_NODE_IDS = [
+    "/tmp/test_x.py",
+    "/etc/test_x.py",
+    "/tmp/test_x.py::test_case",
+    "C:/tmp/test_x.py",
+    "c:/tmp/test_x.py",
+    "C:/tmp/test_x.py::test_case",
+    r"C:\tmp\test_x.py",
+    r"c:\tmp\test_x.py",
+    r"\\server\share\test_x.py",
+    r"\rooted\test_x.py",
+    "C:test_x.py",
+]
+
+RELATIVE_NODE_IDS = [
+    "tests/test_x.py",
+    "tests/test_x.py::test_case",
+    "tests/test_x.py::test_case[param-1]",
+    "test_ok.py",
+    "tests/sub/test_y.py::TestClass::test_method[a-b_1]",
+]
+
+
+@pytest.mark.parametrize("node_id", ABSOLUTE_NODE_IDS)
+def test_absolute_pytest_node_ids_are_rejected(node_id: str) -> None:
+    """A node id must be repo-relative. Absolute targets never reach argv."""
+    with pytest.raises(UnsafeCommand):
+        validate_node_id(node_id)
+
+
+@pytest.mark.parametrize("node_id", ABSOLUTE_NODE_IDS)
+def test_absolute_pytest_node_ids_are_rejected_by_safe_run(node_id: str) -> None:
+    """safe_run enforces it independently, on argv it did not build."""
+    with pytest.raises(UnsafeCommand):
+        safe_run(
+            [sys.executable, "-m", "pytest", "-q", "--", node_id], cwd=Path.cwd()
+        )
+
+
+@pytest.mark.parametrize("node_id", ABSOLUTE_NODE_IDS)
+def test_absolute_pytest_node_ids_are_blocked_evidence(tmp_path: Path, node_id: str) -> None:
+    ev = verify_tests_passed(tmp_path, node_id=node_id, timeout=30)
+    assert ev.ok is False
+    assert ev.detail.startswith("blocked:")
+    assert ev.exit_code is None  # nothing was ever spawned
+
+
+@pytest.mark.parametrize("node_id", RELATIVE_NODE_IDS)
+def test_repo_relative_node_ids_still_work(node_id: str) -> None:
+    assert validate_node_id(node_id) == node_id
+
+
+@pytest.mark.parametrize("node_id", RELATIVE_NODE_IDS)
+def test_repo_relative_node_ids_pass_the_argv_grammar(node_id: str) -> None:
+    from proofloop.evidence import _check_pytest_argv
+
+    _check_pytest_argv([sys.executable, "-m", "pytest", "-q", "--", node_id])
+
+
 def test_option_injection_into_pytest_blocked() -> None:
     with pytest.raises(UnsafeCommand):
         validate_node_id("-p no:cacheprovider")

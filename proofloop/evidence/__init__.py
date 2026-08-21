@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 DEFAULT_TIMEOUT = 60
 
@@ -38,6 +38,9 @@ SHA_PATTERN = re.compile(r"^[0-9a-fA-F]{4,40}$")
 
 #: A pytest node id: ``tests/test_x.py`` or ``tests/test_x.py::test_case``.
 NODE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_./:\[\]-]{1,300}$")
+
+#: A Windows drive qualifier at the start of a path: ``C:``, ``c:/``.
+DRIVE_PATTERN = re.compile(r"^[A-Za-z]:")
 
 #: The only pytest marker expressions ProofLoop may pass: ``foo`` or ``not foo``.
 MARKER_PATTERN = re.compile(r"^(not )?[a-z][a-z0-9_]*$")
@@ -75,13 +78,38 @@ def validate_sha(sha: str) -> str:
 def validate_node_id(node_id: str) -> str:
     """Return ``node_id`` unchanged, or raise :class:`UnsafeCommand`.
 
-    In particular a leading ``-`` (pytest option injection, e.g.
-    ``-p no:cacheprovider``) and shell metacharacters are refused.
+    A pytest node id must be *repo-relative*: ``tests/test_x.py`` or
+    ``tests/test_x.py::test_case[param-1]``. Refused here, so that every
+    caller inherits the rule rather than relying on a separate containment
+    check further down:
+
+    * a leading ``-`` (pytest option injection, e.g. ``-p no:cacheprovider``)
+    * shell metacharacters and anything else outside NODE_ID_PATTERN
+    * ``..`` traversal
+    * absolute POSIX paths (``/tmp/test_x.py``)
+    * Windows drive-qualified paths (``C:/tmp/test_x.py``, ``C:\\tmp...``)
+    * rooted and UNC Windows paths (``\\server\\share...``)
     """
     if not isinstance(node_id, str) or not node_id:
         raise UnsafeCommand("empty pytest node id")
     if node_id.startswith("-"):
         raise UnsafeCommand(f"option-like pytest target rejected: {node_id!r}")
+
+    # Separator check runs before the pattern so that Windows-style targets
+    # get a message about being absolute rather than "unsafe character".
+    if "\\" in node_id:
+        raise UnsafeCommand(f"backslash in pytest node id: {node_id!r}")
+
+    # Only the path part may look path-like; the ``::`` suffix carries the
+    # test name and its parameters.
+    path_part = node_id.split("::", 1)[0]
+    if path_part.startswith(("/", "\\")):
+        raise UnsafeCommand(f"absolute pytest node id rejected: {node_id!r}")
+    if DRIVE_PATTERN.match(path_part):
+        raise UnsafeCommand(f"drive-qualified pytest node id rejected: {node_id!r}")
+    if PurePosixPath(path_part).is_absolute() or PureWindowsPath(path_part).is_absolute():
+        raise UnsafeCommand(f"absolute pytest node id rejected: {node_id!r}")
+
     if not NODE_ID_PATTERN.match(node_id):
         raise UnsafeCommand(f"unsafe pytest node id: {node_id!r}")
     if ".." in node_id:
@@ -171,6 +199,7 @@ def safe_run(
 __all__ = [
     "ALLOWED_GIT_SUBCOMMANDS",
     "DEFAULT_TIMEOUT",
+    "DRIVE_PATTERN",
     "MARKER_PATTERN",
     "NODE_ID_PATTERN",
     "UnsafeCommand",
