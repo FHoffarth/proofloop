@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "proofloop"
+version = "0.1.0"
+description = "Evidence-first verification loop. Agent reports are claims; git/tests/artifacts are evidence."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.0",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+proofloop = "proofloop.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["proofloop*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: tests that touch resources outside the unit test sandbox",
+]
