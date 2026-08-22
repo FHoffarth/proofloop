@@ -170,3 +170,17 @@ def test_dry_run_needs_no_api_keys_and_no_network(
         ["solve", "clean tree?", "--repo", str(repo), "--profile", "quick-check"]
     )
     assert code == EXIT_PASS
+
+
+def test_verify_commit_defaults_to_head(repo: Path) -> None:
+    code = main(
+        [
+            "solve",
+            "verify current commit",
+            "--repo",
+            str(repo),
+            "--profile",
+            "verify-commit",
+        ]
+    )
+    assert code == EXIT_PASS
