@@ -69,13 +69,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--test-timeout", type=int, default=300, help="timeout for TEST_PASSED, seconds"
     )
 
+    demo = sub.add_parser(
+        "demo", help="run interactive 5-minute showcase of ProofLoop thesis"
+    )
+    demo.add_argument(
+        "--scenario",
+        default="all",
+        choices=["all", "blocked", "review", "pass"],
+        help="demo scenario to run (default: all)",
+    )
+    demo.add_argument("--json", action="store_true", help="emit JSON reports")
+
     sub.add_parser("profiles", help="list workflow profiles")
     return parser
 
 
 def _params(args: argparse.Namespace) -> dict[str, object]:
+    commit = args.commit
+    if not commit and args.profile in ("verify-commit", "verify-fix"):
+        commit = "HEAD"
     return {
-        "commit": args.commit,
+        "commit": commit,
         "files": args.files,
         "path": args.path,
         "contains": args.contains,
@@ -94,6 +108,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         for name, profile in sorted(PROFILES.items()):
             console.print(f"{name:<14} {profile.description}")
         return EXIT_PASS
+
+    if args.command == "demo":
+        from .demo import run_demo
+        import json
+        exit_code, reports = run_demo(scenario_filter=args.scenario, console=console)
+        if args.json:
+            console.print_json(
+                json.dumps([r.model_dump(mode="json") for r in reports], indent=2)
+            )
+        return exit_code
 
     try:
         provider = get_provider(args.provider)

@@ -238,26 +238,27 @@ pytest -v -m "not integration"
 
 ---
 
-## Dogfooding
+## Dogfooding & 5-Minute Demo
 
-ProofLoop should be able to test its own core claim.
-A canonical first check is:
+ProofLoop can demonstrate its own core thesis in under 30 seconds:
 
 ```bash
-python -m proofloop.cli solve "Verify that ProofLoop blocks an invalid commit claim" --repo . --profile verify-commit --commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+proofloop demo
 ```
 
-Expected behavior:
+This runs three canonical offline scenarios without network or API keys:
 
-```text
-Invalid commit     FAILED
-Pre-gate           BLOCKED
-Judge              SKIPPED
-Final disposition  BLOCKED
-Exit code          2
+1. **The Hallucination Veto**: An agent claims a phantom commit (`deadbeef...`). Git verification fails, the Pre-Gate BLOCKS immediately, and the Judge LLM is skipped.
+2. **Advisory vs Authority**: The Judge LLM votes `ACCEPT` ("100% safe to deploy"), but evaluative claims (`BUG_FIXED`) remain. The Proof Gate overrides the model vote and requires human review (`REVIEW_REQUIRED`).
+3. **Verified Proof**: Clean deterministic evidence yields a definitive `PASS`.
+
+You can also run specific scenarios:
+
+```bash
+proofloop demo --scenario blocked
+proofloop demo --scenario review
+proofloop demo --scenario pass
 ```
-
-If ProofLoop cannot prove that ProofLoop works, it is not done.
 
 ---
 

@@ -42,6 +42,7 @@ def render_report(report: RunReport, console: Console | None = None) -> None:
 
     table = Table(title="Claims")
     table.add_column("Claim")
+    table.add_column("Statement", overflow="fold")
     table.add_column("Type")
     table.add_column("Result")
     table.add_column("Confidence")
@@ -51,10 +52,15 @@ def render_report(report: RunReport, console: Console | None = None) -> None:
         style = _RESULT_STYLE.get(vc.result, "")
         result_cell = f"[{style}]{vc.result.value}[/{style}]" if style else vc.result.value
         table.add_row(
-            vc.claim.id, vc.claim.type.value, result_cell, vc.confidence.value, vc.reason
+            vc.claim.id,
+            vc.claim.statement,
+            vc.claim.type.value,
+            result_cell,
+            vc.confidence.value,
+            vc.reason,
         )
     if not report.verified:
-        table.add_row("-", "-", "-", "-", "no claims in this plan")
+        table.add_row("-", "-", "-", "-", "-", "no claims in this plan")
     console.print(table)
 
     # Failed evidence stays visible.
@@ -89,5 +95,20 @@ def render_report(report: RunReport, console: Console | None = None) -> None:
         console.print(f"  [yellow]review[/yellow]: {item}")
     for err in report.errors:
         console.print(f"  [red]error[/red]: {err}")
+
+    if report.final_gate.result is GateResult.BLOCKED:
+        console.print(
+            "  [bold red]Resolution:[/bold red] Required deterministic evidence failed or is missing. "
+            "Address blockers before proceeding."
+        )
+    elif report.final_gate.result is GateResult.REVIEW_REQUIRED:
+        console.print(
+            "  [bold yellow]Resolution:[/bold yellow] Deterministic evidence verified, but evaluative claims "
+            "require human engineering sign-off."
+        )
+    elif report.final_gate.result is GateResult.PASS:
+        console.print(
+            "  [bold green]Resolution:[/bold green] All required evidence verified. Gate PASS."
+        )
 
     console.print(f"exit code: {report.exit_code}")
